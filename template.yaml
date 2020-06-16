@@ -1,0 +1,178 @@
+Description: Proof of concept peer-to-peer assisted streaming platform
+
+Parameters:
+  InstanceType:
+    Description: Streaming server instance size
+    Type: String
+    Default: t3.nano
+    AllowedValues: [t3.nano, t3.micro]
+
+Mappings: 
+  AmiByRegion: 
+    ap-east-1: 
+      "ami": "ami-d26218a3"
+    ap-northeast-1: 
+      "ami": "ami-0d5db3e2a1b98ca94"
+    ap-south-1: 
+      "ami": "ami-0237472cf337d9529"
+    ap-southeast-1: 
+      "ami": "ami-0c199cae95cea87f0"
+    ca-central-1: 
+      "ami": "ami-0dbe45195223e250b"
+    eu-central-1: 
+      "ami": "ami-040a1551f9c9d11ad"
+    eu-north-1: 
+      "ami": "ami-0567220a328fe4fee"
+    eu-west-1: 
+      "ami": "ami-0e41581acd7dedd99"
+    me-south-1: 
+      "ami": "ami-0a7794ed517908686"
+    sa-east-1: 
+      "ami": "ami-0065a65613972a22a"
+    us-east-1: 
+      "ami": "ami-0d5ae5525eb033d0a"
+    us-west-1: 
+      "ami": "ami-00a3e4424e9ab3e56"
+    cn-north-1: 
+      "ami": "ami-01993b4213b4bffb5"
+    cn-northwest-1: 
+      "ami": "ami-01d4e30d4d4952d0f"
+    us-gov-west-1: 
+      "ami": "ami-a76736c6"
+    us-gov-east-1: 
+      "ami": "ami-64a84b15"
+    ap-northeast-2: 
+      "ami": "ami-0f4362c71ffaf7759"
+    ap-southeast-2: 
+      "ami": "ami-0c0483bc96aef8b2f"
+    eu-west-2: 
+      "ami": "ami-00f94dc949fea2adf"
+    us-east-2: 
+      "ami": "ami-0a7f2b5b6b87eaa1b"
+    us-west-2: 
+      "ami": "ami-09c6723c6c24250c9"
+    ap-northeast-3: 
+      "ami": "ami-07672d9af3947230d"
+    eu-west-3: 
+      "ami": "ami-0df03c7641cf41947"
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.147.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:  !Join ['', [!Ref "AWS::StackName", "-VPC" ]]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.147.10.0/24
+      MapPublicIpOnLaunch : true
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Public
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value:  !Sub ${AWS::StackName}-Public
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows ssh, rtmp and http/s connections to host
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 1935
+        ToPort: 1935
+        CidrIp: 0.0.0.0/0
+  HttpServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [AmiByRegion, !Ref "AWS::Region", "ami"]
+      InstanceType: !Ref InstanceType
+      KeyName: wpstream
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -x
+          
+          apt-get update
+          git clone https://github.com/sergey-dryabzhinsky/nginx-rtmp-module.git
+          apt-get --assume-yes install build-essential libpcre3 libpcre3-dev libssl-dev zlib1g-dev
+          wget http://nginx.org/download/nginx-1.16.1.tar.gz
+          tar -xf nginx-1.16.1.tar.gz
+          cd nginx-1.16.1
+          ./configure --with-http_ssl_module --add-module=../nginx-rtmp-module
+          make -j 1
+          sudo make install
+          
+          curl https://lostshadow.s3.amazonaws.com/p2p-streaming-platform/nginx.conf > /usr/local/nginx/conf/nginx.conf
+          mkdir /usr/local/nginx/html/player
+          curl https://lostshadow.s3.amazonaws.com/p2p-streaming-platform/player/index.html > /usr/local/nginx/html/player/index.html
+          publicIp=$(curl -L http://169.254.169.254/latest/meta-data/public-ipv4)
+          sed -i "s,{STREAMER_HOST},$publicIp,g" /usr/local/nginx/html/player/index.html
+          /usr/local/nginx/sbin/nginx
+      Tags: 
+        - 
+          Key: "Name"
+          Value: !Sub "${AWS::StackName}-Server"
+
+Outputs:
+  IngressEndpoint:
+    Description: RTMP URL to publish to
+    Value: !Sub 
+      - rtmp://${publicIp}/live/stream001
+      - { publicIp: !GetAtt HttpServer.PublicIp }
+  StreamUrl:
+    Description: HLS URL of the playback stream
+    Value: !Sub 
+      - http://${publicIp}/hls/stream001.m3u8
+      - { publicIp: !GetAtt HttpServer.PublicIp }
+  TestPlayerUrl:
+    Description: Address of the test player
+    Value: !Sub 
+      - http://${publicIp}/player
+      - { publicIp: !GetAtt HttpServer.PublicIp }

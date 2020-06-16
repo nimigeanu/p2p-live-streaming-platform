@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Player test page</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p2p-media-loader-core@latest/build/p2p-media-loader-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/p2p-media-loader-hlsjs@latest/build/p2p-media-loader-hlsjs.min.js"></script>
+    <script src="https://cdn.plyr.io/3.6.2/plyr.js"></script>
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.6.2/plyr.css" />
+</head>
+<body>
+    <video preload="none" id="player" autoplay controls crossorigin></video>
+    <br>
+    Data downloaded from CDN: <span id="dataDownCdn">0</span> MB
+    <br><br>
+    Connected peers: <span id="peerCount">0</span>
+    <br>
+    Data downloaded from peers: <span id="dataDownP2p">0</span> MB
+    <br>
+    Data uploaded to peers: <span id="dataUpP2p">0</span> MB
+    <script>
+        var bytesDownCdn = 0;
+        var bytesDownP2p = 0;
+        var bytesUpP2p = 0;
+        var peerCount = 0;
+
+        this.isP2PSupported = p2pml.core.HybridLoader.isSupported();
+        this.liveSyncDurationCount = 7;
+        
+        this.engine = this.isP2PSupported ? new p2pml.hlsjs.Engine() : undefined;
+        console.log("isP2PSupported: " + isP2PSupported);
+        
+        const player = new Plyr('#player', {
+                captions: {
+                    active: true,
+                    update: true,
+                }
+            });
+        
+      var video = document.querySelector('#player');
+
+      if (Hls.isSupported()) {
+        
+        var hls = new Hls({
+            liveSyncDurationCount: this.liveSyncDurationCount,
+            loader: this.isP2PSupported ? this.engine.createLoaderClass() : Hls.DefaultConfig.loader
+        });
+
+        if (this.isP2PSupported) {
+            p2pml.hlsjs.initHlsJsPlayer(hls);
+        }
+
+        hls.loadSource('http://{STREAMER_HOST}/hls/stream001.m3u8');
+        hls.attachMedia(video);
+
+        if (this.isP2PSupported) {
+            this.engine.on(p2pml.core.Events.PieceBytesDownloaded, onBytesDownloaded);
+            this.engine.on(p2pml.core.Events.PieceBytesUploaded, onBytesUploaded);
+
+            this.engine.on(p2pml.core.Events.PeerConnect, onPeerConnect);
+            this.engine.on(p2pml.core.Events.PeerClose, onPeerClose);
+
+            var trackerAnnounce = this.engine.getSettings().loader.trackerAnnounce;
+        }
+      }
+      
+      function onBytesDownloaded(method, bytes){
+        if (method == "http"){
+            bytesDownCdn += bytes;
+            document.getElementById("dataDownCdn").innerHTML = bytesDownCdn / 1000000;
+        }
+        else if (method == "p2p"){
+            bytesDownP2p += bytes;
+            document.getElementById("dataDownP2p").innerHTML = bytesDownP2p / 1000000;
+        }
+      }
+
+      function onBytesUploaded(method, bytes){
+        if (method == "p2p"){
+            bytesUpP2p += bytes;
+            //console.log("bytesUpP2p: " + bytesUpP2p);
+            document.getElementById("dataUpP2p").innerHTML = bytesUpP2p / 1000000;
+        }
+      }
+
+      function onPeerConnect(peer){
+        peerCount ++;
+        document.getElementById("peerCount").innerHTML = peerCount.toString();
+      }
+
+      function onPeerClose(peer){
+        peerCount --;
+        document.getElementById("peerCount").innerHTML = peerCount;
+      }
+    </script>
+</body>
+</html>
