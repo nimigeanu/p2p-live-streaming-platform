@@ -131,7 +131,6 @@ Resources:
     Properties:
       ImageId: !FindInMap [AmiByRegion, !Ref "AWS::Region", "ami"]
       InstanceType: !Ref InstanceType
-      KeyName: wpstream
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref SecurityGroup
@@ -160,6 +159,35 @@ Resources:
           Key: "Name"
           Value: !Sub "${AWS::StackName}-Server"
 
+  CDN:
+    Type: "AWS::CloudFront::Distribution"
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt HttpServer.PublicDnsName
+            Id: defaultOrigin
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        Enabled: 'true'
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+          TargetOriginId: defaultOrigin
+          ForwardedValues:
+            QueryString: 'false'
+            Cookies:
+              Forward: none
+            Headers:
+              - Origin
+              - Access-Control-Request-Method
+              - Access-Control-Request-Headers
+          ViewerProtocolPolicy: allow-all
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: 'true'
+
 Outputs:
   IngressEndpoint:
     Description: RTMP URL to publish to
@@ -169,8 +197,8 @@ Outputs:
   StreamUrl:
     Description: HLS URL of the playback stream
     Value: !Sub 
-      - http://${publicIp}/hls/stream001.m3u8
-      - { publicIp: !GetAtt HttpServer.PublicIp }
+      - https://${cdnDomain}/hls/stream001.m3u8
+      - { cdnDomain: !GetAtt CDN.DomainName }
   TestPlayerUrl:
     Description: Address of the test player
     Value: !Sub 
